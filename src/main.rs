@@ -165,7 +165,7 @@ fn main() {
     let args = Arc::new(args);
 
     // Create a threadpool and a progress bar manager.
-    let pool = threadpool::ThreadPool::new(args.jobs.unwrap_or(num_cpus::get_physical()));
+    let pool = threadpool::ThreadPool::new(args.jobs.unwrap_or(num_cpus::get()));
     let bars = indicatif::MultiProgress::new();
     bars.set_draw_target(indicatif::ProgressDrawTarget::stdout());
     println!("cliffs: searching for decomposition of {} x {} into {} terms", args.tensor, args.target.1, args.chi);
@@ -208,7 +208,7 @@ fn main() {
     // Spawn a thread to handle saving the output files
     let decomps_out = decomps.clone();
     let args_out = args.clone();
-    std::thread::spawn(move || {
+    let save_thread = std::thread::spawn(move || {
         let args = args_out;
         // Keep track of all previous decompositions that have been found
         let mut prevstates = Vec::<nd::Array2<c64>>::new();
@@ -326,4 +326,5 @@ fn main() {
     std::mem::drop(txf);
     std::mem::drop(txr);
     bars.join().unwrap();
+    save_thread.join().unwrap();
 }
