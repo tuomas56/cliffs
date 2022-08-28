@@ -111,6 +111,7 @@ impl QRDecomposition {
     pub fn project(&mut self, v: &mut nd::Array1<c64>) {
         // w[:-1] = Q[:, :-1].T @ v
         let n = self.r.shape()[1];
+        self.q.slice_mut(s![.., ..n]).mapv_inplace(|v| v.conj());
         nd::linalg::general_mat_vec_mul(
             1.0.into(),
             &self.q.slice(s![.., ..n]).t(),
@@ -118,6 +119,7 @@ impl QRDecomposition {
             0.0.into(),
             &mut self.w.slice_mut(s![..n])
         );
+        self.q.slice_mut(s![.., ..n]).mapv_inplace(|v| v.conj());
         // v = Q[:, :-1] @ w[:-1]
         nd::linalg::general_mat_vec_mul(
             1.0.into(),
@@ -133,6 +135,7 @@ impl QRDecomposition {
     pub fn get_coeffs(&mut self, v: &nd::Array1<c64>) -> nd::ArrayView1<c64> {
         let n = self.r.shape()[1];
         // w[:-1] = Q[:, :-1].T @ v
+        self.q.slice_mut(s![.., ..n]).mapv_inplace(|v| v.conj());
         nd::linalg::general_mat_vec_mul(
             1.0.into(),
             &self.q.slice(s![.., ..n]).t(),
@@ -140,6 +143,7 @@ impl QRDecomposition {
             0.0.into(),
             &mut self.w.slice_mut(s![..n])
         );
+        self.q.slice_mut(s![.., ..n]).mapv_inplace(|v| v.conj());
         // w[:-1] = np.linalg.solve(R[:-1, :], w[:-1])
         self.r.slice(s![..n, ..]).solve_inplace(&mut self.w.slice_mut(s![..n])).unwrap();
         // return w[:-1]

@@ -202,13 +202,13 @@ impl PauliGenerator {
 
 /// The main structure of the program. Provides a way
 /// to search for a Clifford decomposition of a target state.
-pub struct RandomWalk {
+pub struct RandomWalk<S> {
     m: usize,
     n: usize,
     moves: usize,
     chi: usize,
     rng: rand::rngs::ThreadRng,
-    beta: GeometricSequence,
+    beta: S,
     paulis: PauliGenerator,
     target: nd::Array1<c64>,
     proj: nd::Array1<c64>,
@@ -220,11 +220,11 @@ pub struct RandomWalk {
     fitness: f64
 }
 
-impl RandomWalk {
+impl<S: Iterator<Item = f64>> RandomWalk<S> {
     /// Construct a new random walk process that searches for the state given in target.
     /// n is the number of qubits in the state, chi is the number of terms in the decomposition
     /// beta is a geometric sequence defining the annealing parameter.
-    pub fn new(n: usize, chi: usize, m: usize, beta: GeometricSequence, target: nd::Array1<c64>) -> Self {
+    pub fn new(n: usize, chi: usize, m: usize, beta: S, target: nd::Array1<c64>) -> Self {
         let state = nd::Array2::from_elem((1 << n, chi), 1.0.into());
         let decomp = qr::QRDecomposition::new(&state);
         let proj = target.clone();
@@ -336,7 +336,7 @@ impl RandomWalk {
     }
 }
 
-impl Iterator for RandomWalk {
+impl<S: Iterator<Item = f64>> Iterator for RandomWalk<S> {
     type Item = f64;
 
     fn next(&mut self) -> Option<f64> {

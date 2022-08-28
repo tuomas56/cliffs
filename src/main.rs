@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-mod gslc;
-mod search;
-mod qr;
+pub mod gslc;
+pub mod search;
+pub mod qr;
 
 use std::{path::{Path, PathBuf}, sync::{Arc, mpsc, atomic}, ffi::OsStr, fs::File, time::SystemTime, io::Write};
 use ndarray as nd;
@@ -55,6 +55,10 @@ struct Args {
     /// Number of steps in the annealing schedule.
     #[clap(long, short, default_value_t=1000)]
     steps: usize,
+
+    /// Fidelity threshold for accepting approximate decompositions.
+    #[clap(long, short = 'A')]
+    approx: Option<f64>,
 
     /// Random moves per step for simulated annealing.
     #[clap(long, default_value_t=100)]
@@ -276,6 +280,9 @@ fn main() {
         let decomps = decomps.clone();
 
         pool.execute(move || {
+            bar.reset_eta();
+            bar.reset_elapsed();
+
             // If we already finished, just exit
             if decomps.load(atomic::Ordering::Relaxed) > 0 && !args.multiple {
                 bar.finish_and_clear();
@@ -315,7 +322,8 @@ fn main() {
 
             let (fitness, state, gslcs) = rw.finish();
             txf.send(fitness).unwrap();
-            if (fitness - 1.0).abs() < 1e-6 {
+            let thresh = args.approx.map(|f| 1.0 - f).unwrap_or(1e-6);
+            if (fitness - 1.0).abs() <= thresh {
                 txr.send((state, gslcs)).unwrap();
             }
             bar.finish_and_clear();
