@@ -1,0 +1,24 @@
+\begin{tikzpicture}
+    \begin{pgfonlayer}{nodelayer}
+        \node [style=Z dot] (0) at (2, 0) {};
+        \node [style=none] (1) at (3, 0) {};
+        \node [style=Z dot] (2) at (2, -1) {};
+        \node [style=none] (3) at (3, -1) {};
+        \node [style=Z dot] (4) at (2, -2) {};
+        \node [style=none] (5) at (3, -2) {};
+        \node [style=Z dot] (6) at (2, -3) {};
+        \node [style=none] (7) at (3, -3) {};
+    \end{pgfonlayer}
+    \begin{pgfonlayer}{edgelayer}
+        \draw (0) to (1);
+        \draw [style=hadamard edge] (0) to (2);
+        \draw [style=hadamard edge] (0) to (4);
+        \draw [style=hadamard edge] (0) to (6);
+        \draw (2) to (3);
+        \draw [style=hadamard edge] (2) to (4);
+        \draw [style=hadamard edge] (2) to (6);
+        \draw (4) to (5);
+        \draw [style=hadamard edge] (4) to (6);
+        \draw (6) to (7);
+    \end{pgfonlayer}
+\end{tikzpicture}

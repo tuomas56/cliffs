@@ -1,0 +1,15 @@
+\begin{tikzpicture}
+    \begin{pgfonlayer}{nodelayer}
+        \node [style=Z phase dot] (0) at (2, 0) {$\frac{\pi}{2}$};
+        \node [style=none] (1) at (3, 0) {};
+        \node [style=Z dot] (2) at (2, -1) {};
+        \node [style=none] (3) at (3, -1) {};
+        \node [style=X dot] (4) at (1, 0) {};
+    \end{pgfonlayer}
+    \begin{pgfonlayer}{edgelayer}
+        \draw (0) to (1);
+        \draw (0) to (4);
+        \draw (2) to (3);
+        \draw (2) to (4);
+    \end{pgfonlayer}
+\end{tikzpicture}
