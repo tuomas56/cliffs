@@ -1,41 +1,55 @@
 #![allow(dead_code)]
 
-pub mod gslc;
 pub mod search;
 pub mod qr;
+pub mod clifford;
 
-use std::{path::{Path, PathBuf}, sync::{Arc, mpsc, atomic}, ffi::OsStr, fs::File, time::SystemTime, io::Write};
+use std::{path::{Path, PathBuf}, sync::{Arc, mpsc, atomic}, fs::File, time::SystemTime, io::Write};
 use ndarray as nd;
 use ndarray_linalg::{c64, Norm};
 use ndarray_npy::{ReadNpyExt, WriteNpyExt};
-use clap::Parser;
+use clap::{ValueEnum, Parser};
 
-/// A utility to search for Clifford decompositions of states.
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+enum EmitType {
+    NPY,
+    QASM,
+    TIKZ
+}
+
 #[derive(Debug, Parser)]
-#[clap(author, version)]
+#[clap(author, version, about)]
 struct Args {
     /// Number of terms to look for in the decomposition.
-    #[clap(parse(try_from_str=parse_chi))]
+    #[clap(value_parser = parse_chi)]
     chi: usize,
 
     /// File containing the target state.
     /// This should be a numpy .npy file containing a 2^n x 2^m matrix of complex values.
     /// You can use the --tensor option to consider this state tensored with itself.
-    #[clap(required=true, parse(try_from_os_str=parse_target))]
+    #[clap(required=true, value_parser = parse_target)]
     target: (usize, String, nd::Array1<c64>),
 
     /// Output folder path.
     /// By default, this is just the current directory. Files will be output into this folder
-    /// with names in the format "<TARGET>_<TENSOR>_<CHI>_<TIMESTAMP>(_<COMPONENT>).cliffs.<EXT>" 
-    /// where the timestamp is a unix timestamp in milliseconds.
-    /// ".npy" files will be produced containing the components of the decomposition in numerical form,
-    /// as well as ".qgraph" files containing a PyZX compatible representation of the corresponding GSLC.
-    #[clap(long, short, parse(try_from_os_str=parse_output), default_value = ".")]
+    /// with names in the format "<TARGET>_<TENSOR>_<CHI>_<TIMESTAMP>(_<TERM>).cliffs.<EXT>" 
+    /// where the timestamp is a unix timestamp in milliseconds. See '--emit' for the details.
+    #[clap(long, short, value_parser = parse_output, default_value = ".")]
     output: PathBuf,
 
     /// Number of search attempts before stopping.
     #[clap(long, short, default_value_t = 100)]
     attempts: usize,
+
+    /// Which outputs to produce:
+    /// 'npy' - A `.npy` file containing the statevector of each term.
+    /// 'qasm' - A `.qasm` file per term containing a Clifford circuit that perpares this state.
+    /// 'tikz' - A `.tikz` file per term containing a drawing of the corresponding APNF ZX-diagram.
+    /// The 'qasm' output is widely compatible e.g with PyZX or Qiskit, the 'tikz' outputs can be
+    /// edited with TikZit or loaded directly as ZX-diagrams with PyZX. The 'npy' output can be read
+    /// in Python using `numpy.load`.
+    #[clap(long, short, default_value = "npy,qasm,tikz", use_value_delimiter=true)]
+    emit: Vec<EmitType>,
 
     /// Whether to look for multiple decompositions.
     /// If set, the program will keep looking for decompositions after one is found.
@@ -88,7 +102,7 @@ fn parse_chi(s: &str) -> Result<usize, String> {
     }
 }
 
-fn parse_target(s: &OsStr) -> Result<(usize, String, nd::Array1<c64>), String> {
+fn parse_target(s: &str) -> Result<(usize, String, nd::Array1<c64>), String> {
     // We should be able to open the file
     let file = File::open(s)
         .map_err(|e| e.to_string())?;
@@ -139,7 +153,7 @@ fn parse_target(s: &OsStr) -> Result<(usize, String, nd::Array1<c64>), String> {
     Ok((n, name, array))
 }
 
-fn parse_output(s: &OsStr) -> Result<PathBuf, String> {
+fn parse_output(s: &str) -> Result<PathBuf, String> {
     // The path should exist and be a directory.
     let path = PathBuf::from(s);
     let meta = path.metadata()
@@ -184,7 +198,7 @@ fn main() {
     // Channel for fitness values
     let (txf, rxf) = mpsc::channel::<f64>();
     // Channel for final states and GSLCs
-    let (txr, rxr) = mpsc::channel::<(nd::Array2<c64>, Vec<gslc::GSLC>)>();
+    let (txr, rxr) = mpsc::channel::<nd::Array2<c64>>();
     // Shared integer representing number of decompositions found.
     let decomps = Arc::new(atomic::AtomicUsize::new(0));
 
@@ -217,7 +231,7 @@ fn main() {
         // Keep track of all previous decompositions that have been found
         let mut prevstates = Vec::<nd::Array2<c64>>::new();
         
-        'outer: while let Ok((state, gslcs)) = rxr.recv() {
+        'outer: while let Ok(state) = rxr.recv() {
             // Check to make sure this is not a permutation of a previous decomposition
             for prev in &prevstates {
                 let mut same = 0;
@@ -238,7 +252,11 @@ fn main() {
             }
 
             // If so we can add one to the number found
-            decomps_out.fetch_add(1, atomic::Ordering::Relaxed);
+            let decomps_found = decomps_out.fetch_add(1, atomic::Ordering::Relaxed);
+            // If we aren't looking for multiple decompositions, don't save this one
+            if decomps_found >= 1 && !args.multiple {
+                continue
+            }
 
             // Create the stem of the output files
             let timestamp = SystemTime::now()
@@ -247,18 +265,34 @@ fn main() {
                 .as_millis();
             let stem = format!("{}_{}_{}_{}", args.target.1, args.tensor, args.chi, timestamp);
 
-            // Save the state as a 2d numpy array to file
-            let state_file = File::create(args.output
-                .join(format!("{}.cliffs.npy", stem))
-            ).unwrap();
-            state.write_npy(state_file).unwrap();
-
-            // Save each GSLC individually as a pyzx-compatible qgraph.
-            for (i, gslc) in gslcs.into_iter().enumerate() {
-                let mut gslc_file = File::create(args.output
-                    .join(format!("{}_{}.cliffs.qgraph", stem, i))
+            if args.emit.contains(&EmitType::NPY) {
+                // Save the state as a 2d numpy array to file
+                let state_file = File::create(args.output
+                    .join(format!("{}.cliffs.npy", stem))
                 ).unwrap();
-                write!(&mut gslc_file, "{}", gslc.to_qgraph()).unwrap();
+                state.write_npy(state_file).unwrap();
+            }
+
+            if args.emit.contains(&EmitType::QASM) || args.emit.contains(&EmitType::TIKZ) {
+                // Save each component individually as a pyzx-compatible qasm and tikz file.
+                for i in 0..state.shape()[1] {
+                    let col = state.column(i);
+                    let (graph, circ) = clifford::find_clifford(&col, 1e-6);
+
+                    if args.emit.contains(&EmitType::TIKZ) {
+                        let mut graph_file = File::create(args.output
+                            .join(format!("{}_{}.cliffs.tikz", stem, i))
+                        ).unwrap();
+                        write!(&mut graph_file, "{}", clifford::graph_to_tikz(&graph)).unwrap();
+                    }
+
+                    if args.emit.contains(&EmitType::QASM) {
+                        let mut qasm_file = File::create(args.output
+                            .join(format!("{}_{}.cliffs.qasm", stem, i))
+                        ).unwrap();
+                        write!(&mut qasm_file, "{}", circ.to_qasm()).unwrap();
+                    }
+                }
             }
 
             prevstates.push(state);
@@ -320,11 +354,11 @@ fn main() {
                 }
             }
 
-            let (fitness, state, gslcs) = rw.finish();
+            let (fitness, state) = rw.finish();
             txf.send(fitness).unwrap();
             let thresh = args.approx.map(|f| 1.0 - f).unwrap_or(1e-6);
             if (fitness - 1.0).abs() <= thresh {
-                txr.send((state, gslcs)).unwrap();
+                txr.send(state).unwrap();
             }
             bar.finish_and_clear();
         })
@@ -334,5 +368,8 @@ fn main() {
     std::mem::drop(txf);
     std::mem::drop(txr);
     bars.join().unwrap();
-    save_thread.join().unwrap();
+    match save_thread.join() {
+        Ok(_) => (),
+        Err(e) => panic!("{:?} {:?}", e.downcast_ref::<&str>(), e.downcast_ref::<String>())
+    }
 }

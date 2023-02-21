@@ -1,7 +1,7 @@
 use ndarray_linalg::{c64, Norm};
 use ndarray as nd;
 use rand::Rng;
-use crate::{gslc, qr};
+use crate::qr;
 
 /// A geometric series specified by the start, end and number of steps.
 #[derive(Clone, Copy)]
@@ -56,8 +56,7 @@ impl PauliGenerator {
     // Overall this should be O(n2^n + n^3) time.
     fn apply_random(&mut self, 
         rng: &mut impl rand::Rng, 
-        vector: &mut nd::ArrayViewMut<c64, nd::Dim<[usize; 1]>>,
-        gslc: &mut gslc::GSLC
+        vector: &mut nd::ArrayViewMut<c64, nd::Dim<[usize; 1]>>
     ) {
         // To do the multiplication P*v for some Pauli string v, we have
         // an iterative method. First, split P*v = P_1P_2P_3...P_n*v as
@@ -135,68 +134,6 @@ impl PauliGenerator {
                     .assign(&self.temp.slice(nd::s![j..(j+block_size)]));
             }
         }
-
-        // Now to apply this to the GSLC we use the CNOT ladder construction
-        // so we need to find a qubit which does not have the I Pauli applied.
-        let first = if let Some(first) = self.string.iter().position(|&p| p > 0) {
-            first
-        } else {
-            // If the string is just all identities, there is nothing to do here.
-            return
-        };
-
-        // Then first do the local Cliffords on each qubit
-        for (i, &v) in self.string.iter().enumerate() {
-            match v {
-                0 => continue,
-                1 => gslc.apply_h(i),
-                2 => {
-                    // X[pi/2]
-                    gslc.apply_h(i);
-                    gslc.apply_s(i);
-                    gslc.apply_h(i);
-                },
-                3 => continue,
-                _ => unreachable!()
-            }
-        }
-
-        // Now we have the phase-gadget. This is just the form where
-        // everything is connected to one qubit, for simplicity.
-        for (i, &v) in self.string.iter().enumerate() {
-            if v > 0 && i != first {
-                gslc.apply_h(first);
-                gslc.apply_cz(first, i);
-                gslc.apply_h(first);
-            }
-        }
-
-        gslc.apply_s(first);
-
-        for (i, &v) in self.string.iter().enumerate() {
-            if v > 0 && i != first {
-                gslc.apply_h(first);
-                gslc.apply_cz(first, i);
-                gslc.apply_h(first);
-            }
-        }
-
-        // And then do the trailing local Cliffords
-        for (i, &v) in self.string.iter().enumerate() {
-            match v {
-                0 => continue,
-                1 => gslc.apply_h(i),
-                2 => {
-                    // X[-pi/2]
-                    gslc.apply_h(i);
-                    gslc.apply_z(i);
-                    gslc.apply_s(i);
-                    gslc.apply_h(i);
-                },
-                3 => continue,
-                _ => unreachable!()
-            }
-        }
     }
 }
 
@@ -214,8 +151,6 @@ pub struct RandomWalk<S> {
     proj: nd::Array1<c64>,
     state: nd::Array2<c64>,
     prev: nd::Array1<c64>,
-    gslcs: Vec<gslc::GSLC>,
-    prevg: gslc::GSLC,
     decomp: qr::QRDecomposition,
     fitness: f64
 }
@@ -237,8 +172,6 @@ impl<S: Iterator<Item = f64>> RandomWalk<S> {
             proj,
             state,
             prev: nd::Array1::from_elem(1 << n, 0.0.into()),
-            gslcs: vec![gslc::GSLC::new(n); chi],
-            prevg: gslc::GSLC::new(n),
             decomp,
             fitness: 0.0
         }
@@ -250,9 +183,8 @@ impl<S: Iterator<Item = f64>> RandomWalk<S> {
         let mut column = self.state.slice_mut(nd::s![.., index]);
         // prev = column
         column.assign_to(&mut self.prev);
-        self.prevg = self.gslcs[index].clone();
         // column = P*prev
-        self.paulis.apply_random(&mut self.rng, &mut column, &mut self.gslcs[index]);
+        self.paulis.apply_random(&mut self.rng, &mut column);
         // column = (I + P)*prev
         column += &self.prev;
         // column = k*(I + P)*prev = e^(i(pi/4)P)*prev
@@ -280,7 +212,6 @@ impl<S: Iterator<Item = f64>> RandomWalk<S> {
         //self.decomp.update_column(index, column.view());
         // column = prev
         column.assign(&self.prev);
-        self.gslcs[index] = self.prevg.clone();
     }
 
     // Project the target into the subspace formed
@@ -325,14 +256,14 @@ impl<S: Iterator<Item = f64>> RandomWalk<S> {
 
     /// Return the maximum fitness achieved,
     /// statevectors of the terms, and GSLC forms of the terms.
-    pub fn finish(mut self) -> (f64, nd::Array2<c64>, Vec<gslc::GSLC>) {
+    pub fn finish(mut self) -> (f64, nd::Array2<c64>) {
         let coeffs = self.get_coeffs();
         for (i, coeff) in coeffs.into_iter().enumerate() {
             let mut col = self.state.column_mut(i);
             col *= coeff;
         }
 
-        (self.fitness, self.state, self.gslcs)
+        (self.fitness, self.state)
     }
 }
 

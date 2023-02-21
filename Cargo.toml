@@ -1,12 +1,12 @@
 [package]
 name = "cliffs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Tuomas Laakkonen <pigworts2@gmail.com>"]
-description = "A utility to search for Clifford decompositions of states."
+description = "A utility to search for Clifford decompositions of quantum states."
 
 [dependencies]
-clap = { version = "3.1.17", features = ["derive"] }
+clap = { version = "4.1.6", features = ["derive", "wrap_help"] }
 ndarray = { version = "0.15.4", features = ["blas", "approx"] }
 ndarray-linalg = { version = "0.14.1", features = ["openblas-system"] }
 ndarray-npy = "0.8.1"
@@ -16,3 +16,4 @@ serde_json = "1.0.81"
 threadpool = "1.8.1"
 indicatif = "0.16.2"
 num_cpus = "1.13.1"
+zx = { package = "quizx", git = "https://github.com/Quantomatic/quizx.git" }
